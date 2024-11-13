@@ -1,8 +1,5 @@
 import sys
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QToolBar, QAction, QLineEdit, QTabWidget, QWidget, 
-    QVBoxLayout, QPushButton, QInputDialog, QMessageBox
-)
+from PyQt5.QtWidgets import QApplication, QMainWindow, QToolBar, QAction, QLineEdit, QTabWidget, QWidget, QVBoxLayout, QPushButton, QInputDialog, QMessageBox, QMenu
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import QUrl, Qt
 
@@ -13,13 +10,13 @@ class BrowserTab(QWidget):
         layout = QVBoxLayout()
         self.browser = QWebEngineView()
 
-        # Ensure URL is properly formatted with http:// or https:// prefix
+        # Ensure `url` is a valid string or QUrl
         if isinstance(url, str):
-            if not url.startswith("http"):
-                url = "http://" + url
-            url = QUrl(url)
-        
-        self.browser.setUrl(url)
+            url = QUrl(url)  # Convert string to QUrl if necessary
+        elif not isinstance(url, QUrl):
+            url = QUrl("https://www.google.com")  # Default to a valid URL if something went wrong
+
+        self.browser.setUrl(url)  # Pass the URL directly as a QUrl object
         layout.addWidget(self.browser)
         self.setLayout(layout)
 
@@ -28,15 +25,15 @@ class Browser(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Initialize the tab widget
+        # Set up the tab widget
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tabs.customContextMenuRequested.connect(self.show_tab_context_menu)
-        self.tabs.tabBarDoubleClicked.connect(self.add_new_tab)
-        self.tabs.currentChanged.connect(self.update_url_bar)
+        self.tabs.tabBarDoubleClicked.connect(self.add_new_tab)  # Double-click to add new tab
+        self.tabs.currentChanged.connect(self.update_url_bar)  # Update URL bar on tab change
         self.tabs.setTabsClosable(True)
-        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs.tabCloseRequested.connect(self.close_tab)  # Close tab on request
+        self.tabs.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tabs.customContextMenuRequested.connect(self.show_context_menu)  # Right-click for custom menu
 
         self.setCentralWidget(self.tabs)
 
@@ -44,95 +41,118 @@ class Browser(QMainWindow):
         nav_toolbar = QToolBar("Navigation")
         self.addToolBar(nav_toolbar)
 
+        # Back button
         back_button = QAction("Back", self)
-        back_button.triggered.connect(lambda: self.tabs.currentWidget().browser.back())
+        back_button.triggered.connect(lambda: self.navigate_and_reset(self.tabs.currentWidget().browser.back))
         nav_toolbar.addAction(back_button)
 
+        # Forward button
         forward_button = QAction("Forward", self)
-        forward_button.triggered.connect(lambda: self.tabs.currentWidget().browser.forward())
+        forward_button.triggered.connect(lambda: self.navigate_and_reset(self.tabs.currentWidget().browser.forward))
         nav_toolbar.addAction(forward_button)
 
+        # Reload button
         reload_button = QAction("Reload", self)
-        reload_button.triggered.connect(lambda: self.tabs.currentWidget().browser.reload())
+        reload_button.triggered.connect(lambda: self.navigate_and_reset(self.tabs.currentWidget().browser.reload))
         nav_toolbar.addAction(reload_button)
 
+        # Home button
         home_button = QAction("Home", self)
-        home_button.triggered.connect(self.navigate_home)
+        home_button.triggered.connect(lambda: self.navigate_and_reset(self.navigate_home))
         nav_toolbar.addAction(home_button)
 
+        # URL bar
         self.url_bar = QLineEdit(self)
         self.url_bar.returnPressed.connect(self.navigate_to_url)
         nav_toolbar.addWidget(self.url_bar)
 
+        # Add a new tab button to the toolbar
         new_tab_button = QPushButton("+", self)
-        new_tab_button.clicked.connect(lambda: self.add_new_tab(QUrl("https://www.google.com"), "New Tab"))
+        new_tab_button.clicked.connect(self.add_new_tab)
         nav_toolbar.addWidget(new_tab_button)
 
-        # Add the initial tab
+        # Add initial tab
         self.add_new_tab(QUrl("https://www.google.com"), "New Tab")
+
+        # Window settings
         self.setWindowTitle("PyZodiac")
         self.showMaximized()
 
     def add_new_tab(self, qurl=None, label="New Tab"):
-        # Check if a valid URL is provided, or set default
         if qurl is None:
-            qurl = QUrl("https://www.google.com")
-        elif isinstance(qurl, str):
-            if not qurl.startswith("http"):
-                qurl = "http://" + qurl
+            qurl = QUrl("https://www.google.com")  # Default to QUrl if None is passed
+
+        # Ensure `qurl` is a valid QUrl object before creating a tab
+        if isinstance(qurl, str):
             qurl = QUrl(qurl)
         
-        # Initialize new tab with URL
-        new_tab = BrowserTab(qurl)
-        index = self.tabs.addTab(new_tab, label)
-        self.tabs.setCurrentIndex(index)
+        # Create a new BrowserTab with the QUrl object directly
+        new_tab = BrowserTab(qurl)  # No need for `.toString()`
+        i = self.tabs.addTab(new_tab, label)
+        self.tabs.setCurrentIndex(i)
 
-        # Connect the tab's browser URL change to update the URL bar
-        new_tab.browser.urlChanged.connect(lambda qurl, browser=new_tab.browser: self.update_url_bar_for_browser(qurl, browser))
+        # Update URL bar to the new tab's URL
+        new_tab.browser.urlChanged.connect(lambda qurl, browser=new_tab.browser: self.update_url_bar(qurl, browser))
 
-    def close_tab(self, index):
-        # Safeguard to prevent closing the last tab
-        if self.tabs.count() > 1:
-            self.tabs.removeTab(index)
+    def close_tab(self, i):
+        if self.tabs.count() < 2:
+            return  # Prevent closing the last tab
+        self.tabs.removeTab(i)
 
     def navigate_home(self):
         self.tabs.currentWidget().browser.setUrl(QUrl("https://www.google.com"))
 
     def navigate_to_url(self):
-        url = self.url_bar.text().strip()
+        url = self.url_bar.text()
         if not url.startswith("http"):
             url = "http://" + url
-        # Check for HTTP protocol and prompt if necessary
+        # Check for HTTP vs HTTPS
         if url.startswith("http://"):
-            choice = QMessageBox.warning(
-                self,
-                "Unsecure Connection Warning",
-                "PyZodiac is about to go to an http:// website, NOT a https:// website, meaning the following website is (potentionally) not safe, or you forgot to type the https:// in the domain, which for some reason activates this popup, but i wont fix this because there is no way to check if its http or not otherwise. Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if choice == QMessageBox.No:
-                return  # Stop navigation if the user chooses "Return to safety"
+            self.show_http_warning(url)
+        else:
+            self.tabs.currentWidget().browser.setUrl(QUrl(url))
 
-        # Navigate to the URL if the user continues or if it's a secure URL
-        self.tabs.currentWidget().browser.setUrl(QUrl(url))
+    def update_url_bar(self, qurl=None, browser=None):
+        if browser != self.tabs.currentWidget().browser:
+            return
+        self.url_bar.setText(self.tabs.currentWidget().browser.url().toString())
 
-    def update_url_bar(self, index):
-        current_browser = self.tabs.widget(index).browser if self.tabs.widget(index) else None
-        if current_browser:
-            self.url_bar.setText(current_browser.url().toString())
+    def show_http_warning(self, url):
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setText("PyZodiac is about to go to a http:// website, NOT a https:// website, meaning the following website is not safe. Do you want to continue?")
+        msg_box.setWindowTitle("Unsafe Website Warning")
+        continue_button = msg_box.addButton("Continue to unsafe website", QMessageBox.AcceptRole)
+        return_button = msg_box.addButton("Return to safety", QMessageBox.RejectRole)
+        
+        msg_box.exec_()
 
-    def update_url_bar_for_browser(self, qurl, browser):
-        # Only update the URL bar if the signal came from the active tab
-        if self.tabs.currentWidget().browser == browser:
-            self.url_bar.setText(qurl.toString())
+        if msg_box.clickedButton() == continue_button:
+            self.tabs.currentWidget().browser.setUrl(QUrl(url))
+        else:
+            self.url_bar.setText("")
 
-    def show_tab_context_menu(self, pos):
+    def show_context_menu(self, pos):
         index = self.tabs.tabBar().tabAt(pos)
         if index != -1:
-            new_name, ok = QInputDialog.getText(self, "Rename Tab", "Enter new tab name:")
-            if ok and new_name:
-                self.tabs.setTabText(index, new_name)
+            menu = QMenu()
+            rename_action = QAction("Rename Tab", self)
+            rename_action.triggered.connect(lambda: self.rename_tab(index))
+            menu.addAction(rename_action)
+            menu.exec_(self.tabs.tabBar().mapToGlobal(pos))
+
+    def rename_tab(self, index):
+        current_name = self.tabs.tabText(index)
+        new_name, ok = QInputDialog.getText(self, "Rename Tab", "Enter new tab name:", text=current_name)
+        if ok and new_name:
+            self.tabs.setTabText(index, new_name)
+        
+        # Ensure buttons are visually reset after renaming
+        QApplication.processEvents()
+
+    def navigate_and_reset(self, navigation_action):
+        navigation_action()  # Perform the navigation action
+        QApplication.processEvents()  # Process all pending UI events
 
 
 if __name__ == "__main__":
